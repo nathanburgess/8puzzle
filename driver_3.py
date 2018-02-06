@@ -1,110 +1,135 @@
 import sys
 import platform
-import queue
 import time
-from collections import deque
+from collections import OrderedDict
+import heapq
 
-BOARD_SIZE = 0
-BOARDS = []
-goal = (0, 1, 2, 3, 4, 5, 6, 7, 8)
-
-# class Tree:
-#     def __init__(self, values):
-#         self.root = Node(self, values)
-#         self.root.calculate_children()
-#
-#     def __str__(self):
-#         return self.root.__str__()
-#
-#     def bfs(self):
-#         print("")
-#
-#
-# class Node:
-#     def __init__(self, parent, values):
-#         self.parent = parent
-#         self.values = tuple(values)
-#         self.children = []
-#         self.set_blank()
-#
-#     def __str__(self):
-#         """Print out this board as a n x n square"""
-#         val = []
-#         for i, x in enumerate(self.values):
-#             if i % 3 == 0:
-#                 val.append("\n")
-#             val.append("{} ".format(x))
-#         return "".join(val)
-#
-#     def set_blank(self):
-#         """Find the location of the blank space on this board"""
-#         self.blank = []
-#         for x, ix in enumerate(self.values):
-#             if ix == 0:
-#                 self.blank = x
-#
-#     def calculate_children(self):
-#         """Calculate the children for this node"""
-#         values = self.values
-#
-#         # Get indices for neighbors
-#         uid = self.blank - BOARD_SIZE
-#         rid = self.blank + 1
-#         did = self.blank + BOARD_SIZE
-#         lid = self.blank - 1
-#
-#         # Calculate the new board when a left move happens
-#         if self.blank % BOARD_SIZE != 0:
-#             new_values = list(values)
-#             left = values[lid]
-#             new_values[self.blank] = left
-#             new_values[lid] = 0
-#             self.add_child(new_values)
-#
-#         # Calculate the new board when a right move happens
-#         if (self.blank - BOARD_SIZE + 1) % BOARD_SIZE != 0:
-#             new_values = list(values)
-#             right = values[rid]
-#             new_values[self.blank] = right
-#             new_values[rid] = 0
-#             self.add_child(new_values)
-#
-#         # Calculate the new board when an up move happens
-#         if self.blank >= BOARD_SIZE:
-#             new_values = list(values)
-#             up = values[uid]
-#             new_values[self.blank] = up
-#             new_values[uid] = 0
-#             self.add_child(new_values)
-#
-#         # Calculate the new board when a down move happens
-#         if self.blank < BOARD_SIZE * BOARD_SIZE - BOARD_SIZE:
-#             new_values = list(values)
-#             down = values[did]
-#             new_values[self.blank] = down
-#             new_values[did] = 0
-#             self.add_child(new_values)
-#
-#         self.expand_children()
-#
-#         # print("Node: {} {}\nSelf: {} {}".format(node.__hash__(), node, self.__hash__(), self))
-#         # print("up: {}, right: {}, down: {}, left: {}".format(up, right, down, left))
-#
-#     def add_child(self, values):
-#         node = Node(self, values)
-#         if node.values not in TILE_SET:
-#             # print("Added values {} to TILE_SET ({})".format(node.values, len(TILE_SET)))
-#             TILE_SET.add(node.values)
-#             self.children.append(node)
-#
-#     def expand_children(self):
-#         for node in self.children:
-#             if node.values == goal:
-#                 continue
-#             node.calculate_children()
+# Set up some "global" variables
+goal_state = (0, 1, 2, 3, 4, 5, 6, 7, 8)
+board_size = 0
+nodesExpanded = 0
+maxDepth = 0
 
 
-# RAM calculations are system dependant, import the proper package
+def test_dir(dir, pos, row, col):
+    if dir == "Up" and row > 0:
+        return pos - board_size
+    elif dir == "Down" and row < board_size - 1:
+        return pos + board_size
+    elif dir == "Left" and col > 0:
+        return pos - 1
+    elif dir == "Right" and col < board_size - 1:
+        return pos + 1
+    return -1
+
+
+class Node:
+    global goal_state
+    global board_size
+
+    def __init__(self, tiles, parent=None, path=None):
+        self.tiles = tiles
+        self.parent = parent
+        self.path = path
+        self.depth = (parent.depth + 1) if parent else 0
+        self.cost = 1
+
+    def expand(self):
+        children = []
+        blank = self.tiles.index(0)
+        col = blank % board_size
+        row = int(blank / board_size)
+
+        for dir in ["Up", "Down", "Left", "Right"]:
+            # pdir = self.parent.path if self.parent else None
+            # if pdir == "Up" and dir == "Down":
+            #     continue
+            # elif pdir == "Down" and dir == "Up":
+            #     continue
+            # elif pdir == "Left" and dir == "Right":
+            #     continue
+            # elif pdir == "Right" and dir == "Left":
+            #     continue
+
+            pos = test_dir(dir, blank, row, col)
+            if pos != -1:
+                tiles = list(self.tiles)
+                new_tiles = tiles
+                new_tiles[pos], new_tiles[blank] = new_tiles[blank], new_tiles[pos]
+                children.append(Node(tuple(new_tiles), self, dir))
+        return children
+
+
+class AstNode:
+    global goal_state
+
+    def __init__(self, tiles, parent=None, path=None, cost=1):
+        self.tiles = tiles
+        self.parent = parent
+        self.path = path
+        self.depth = (parent.depth + 1) if parent else 0
+        self.cost = cost
+        self.heuristic = 0
+
+    def __str__(self):
+        return "{} : {}".format(self.tiles, self.heuristic)
+
+    def __lt__(self, other):
+        return self.heuristic < other.heuristic
+
+    def __eq__(self, other):
+        return self.tiles == other
+
+    def __cmp__(self, other):
+        return self < other
+
+    def __hash__(self):
+        return hash(self.tiles)
+
+    def expand(self):
+        children = []
+        blank = self.tiles.index(0)
+        col = blank % board_size
+        row = int(blank / board_size)
+
+        for dir in ["Up", "Down", "Left", "Right"]:
+            pos = test_dir(dir, blank, row, col)
+            if pos != -1:
+                tiles = list(self.tiles)
+                new_tiles = tiles
+                new_tiles[pos], new_tiles[blank] = new_tiles[blank], new_tiles[pos]
+                children.append(AstNode(tuple(new_tiles), self, dir))
+        return children
+
+    def calculate_ast_heuristic(self):
+        self.heuristic = self.count_misplaced_tiles() + self.manhattan_distance()
+
+    def manhattan_distance(self):
+        distance = 0
+        goal_positions = []
+        for i, item in enumerate(self.tiles):
+            x = i % board_size
+            y = int(i / board_size)
+            goal_positions.append((x, y))
+
+        for i, x in enumerate(self.tiles):
+            if x == 0:
+                continue
+            x1 = i % board_size
+            y1 = int(i / board_size)
+            x2 = goal_positions[x][0]
+            y2 = goal_positions[x][1]
+            distance += abs(x1 - x2) + abs(y1 - y2)
+        return distance
+
+    def count_misplaced_tiles(self):
+        count = 0
+        for i, x in enumerate(self.tiles):
+            if x != goal_state[i]:
+                count += 1
+        return count
+
+
 if platform.system() == "Windows":
     import psutil
 else:
@@ -112,138 +137,151 @@ else:
 
 # Get the algorithm from the input arguments
 algorithm = sys.argv[1]
-# Get the puzzle to solve from the input arguments and save it as a tuple of ints
-start = sys.argv[2].split(",")
-start = tuple(map(int, start))
-
+# Get the initial state
+input_tiles = sys.argv[2].split(",")
+initial_state = tuple(map(int, input_tiles))
 print()
 
 # Determine the n x n size of the puzzle based on the input
 size = 10
-length = len(start)
+length = len(input_tiles)
 while size > 1:
     size -= 1
     if length == size:
         continue
     if length % size == 0:
-        BOARD_SIZE = size
+        board_size = size
         break
 
 
-class Board:
-    goal = (0, 1, 2, 3, 4, 5, 6, 7, 8)
-
-    def __init__(self, tiles):
-        self.tiles = tiles
-        self.blank = 0
-        self.set_blank()
-
-    def __str__(self):
-        """Print out this board as a n x n square"""
-        val = []
-        for i, x in enumerate(self.tiles):
-            if i % 3 == 0:
-                val.append("\n")
-            val.append("{} ".format(x))
-        return "".join(val)
-
-    def goal_check(self):
-        return goal == self.tiles
-
-    def set_blank(self):
-        """Find the location of the blank space on this board"""
-        self.blank = []
-        for x, ix in enumerate(self.tiles):
-            if ix == 0:
-                self.blank = x
-
-    def move_tile(self, index):
-        tiles = list(self.tiles)
-        tiles[self.blank] = tiles[index]
-        tiles[index] = 0
-        new_board = Board(tuple(tiles))
-        return new_board
-
-
-class State:
-    def __init__(self, board, path=[]):
-        self.board = board
-        self.path = path
-
-    def goal_check(self):
-        return self.board.goal_check()
-
-    def create_paths(self):
-        return [self.make_path(dir) for dir in ["up", "right", "down", "left"]]
-
-    def make_path(self, dir):
-        blank = self.board.blank
-        col = self.board.blank % BOARD_SIZE
-        row = int(self.board.blank / BOARD_SIZE)
-        size = BOARD_SIZE - 1
-        if dir == "up" and row > 0:
-            blank -= size + 1
-        if dir == "right" and col < size:
-            blank += 1
-        if dir == "down" and row < size:
-            blank += size + 1
-        if dir == "left" and col > 0:
-            blank -= 1
-        board = self.board.move_tile(blank)
-        self.path.append(dir)
-        return State(board, self.path)
-
-
-pathCost = 0
-nodesExpanded = 0
-depth = 0
-maxDepth = 0
-maxRam = 0
-
-
-def solve_bfs(initial_state):
-    explored = set()
-    frontier = deque()
-    frontier.append(initial_state)
+def bfs(state):
     global nodesExpanded
+    global maxDepth
+    counter = 0
+    frontier = OrderedDict()
+    explored = set()
 
-    while len(frontier) > 0:
-        state = frontier.pop()
-        explored.add(state.board.tiles)
+    frontier[counter] = Node(state)
 
-        if state.goal_check():
+    while frontier:
+        state = frontier.pop(next(iter(frontier)))
+        explored.add(state.tiles)
+
+        if state.tiles == goal_state:
+            nodesExpanded = len(explored)
             return state
 
-        for node in state.create_paths():
-            if node not in frontier and node.board.tiles not in explored:
-                frontier.append(node)
+        for child in state.expand():
+            if child not in frontier and child.tiles not in explored:
+                counter += 1
+                frontier[counter] = child
+                maxDepth = child.depth
+
+
+def dfs(state):
+    global nodesExpanded
+    global maxDepth
+    counter = 0
+    frontier = OrderedDict()
+    explored = set()
+
+    frontier[counter] = Node(state)
+
+    while frontier:
+        state = frontier.pop(next(reversed(frontier)))
+        explored.add(state.tiles)
+
+        if state.tiles == goal_state:
+            nodesExpanded = len(explored)
+            return state
+
+        children = state.expand()
+        children.reverse()
+        for child in children:
+            if child not in frontier and child.tiles not in explored:
+                counter += 1
+                frontier[counter] = child
+                maxDepth = child.depth
+
+
+def ast(state):
+    global nodesExpanded
+    global maxDepth
+    global goal_state
+    state = AstNode(state)
+    state.calculate_ast_heuristic()
+    frontier = [state]
+    explored = set()
+
+    while frontier:
+        state = heapq.heappop(frontier)
+        nodesExpanded = len(explored)
+        explored.add(state.tiles)
+
+        if state.tiles == goal_state:
+            return state
+
+        if len(explored) % 1000 == 0:
+            print(len(explored))
+
+        # if len(explored) > 10:
+        #     return state
+
+        for child in state.expand():
+            if child not in frontier and child.tiles not in explored:
                 nodesExpanded += 1
+                frontier.append(child)
+                maxDepth = child.depth
+            elif child in frontier:
+                frontier.remove(child)
+                child.heuristic -= 1
+                frontier.append(child)
+
+    return state
 
 
-start_time = time.time()
+solution = None
 
-board = Board(start)
-state = State(board)
-solution = solve_bfs(state)
-print(solution)
-print(solution.board)
-pathToGoal = solution.path
+# Track how long the program takes to execute
+start_time = time.clock()
+if sys.argv[1] == "bfs":
+    solution = bfs(initial_state)
+elif sys.argv[1] == "dfs":
+    solution = dfs(initial_state)
+elif sys.argv[1] == "ast":
+    solution = ast(initial_state)
 
-runTime = time.time() - start_time
+temp = solution
+pathToGoal = [temp.path]
+pathCost = 1
+while temp.depth > 1:
+    temp = temp.parent
+    pathToGoal.append(temp.path)
+    pathCost += 1
+
+nodesExpanded -= 1
 
 #
 # Print out the statistics for this puzzle
 #
-
 if platform.system() == "Windows":
     maxRam = psutil.Process().memory_info().rss
 else:
     maxRam = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
-print("\n---------------\npath_to_goal:", pathToGoal)
-print("cost_of_path:", pathCost)
-print("nodes_expanded:", nodesExpanded)
-print("search_depth:", depth)
-print("max_search_depth:", maxDepth)
-print("running_time:", runTime)
-print("max_ram_usage:", maxRam * 0.000001)
+output = open("output.txt", "w")
+output.write("path_to_goal: {}\n".format(pathToGoal[::-1]))
+output.write("cost_of_path: {}\n".format(pathCost))
+output.write("nodes_expanded: {}\n".format(nodesExpanded))
+output.write("search_depth: {}\n".format(solution.depth))
+output.write("max_search_depth: {}\n".format(maxDepth))
+output.write("running_time: {}\n".format(time.clock() - start_time))
+output.write("max_ram_usage: {}".format(maxRam * 0.000001))
+
+print("path_to_goal: {}".format(pathToGoal[::-1]))
+print("cost_of_path: {}".format(pathCost))
+print("nodes_expanded: {}".format(nodesExpanded))
+print("search_depth: {}".format(solution.depth))
+print("max_search_depth: {}".format(maxDepth))
+print("running_time: {}".format(time.clock() - start_time))
+print("max_ram_usage: {}".format(maxRam * 0.000001))
