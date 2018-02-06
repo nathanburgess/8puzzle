@@ -3,6 +3,7 @@ import platform
 import time
 from collections import OrderedDict
 import heapq
+import queue
 
 # Set up some "global" variables
 goal_state = (0, 1, 2, 3, 4, 5, 6, 7, 8)
@@ -27,66 +28,24 @@ class Node:
     global goal_state
     global board_size
 
-    def __init__(self, tiles, parent=None, path=None):
+    def __init__(self, tiles, parent=None, path="None"):
         self.tiles = tiles
         self.parent = parent
         self.path = path
         self.depth = (parent.depth + 1) if parent else 0
         self.cost = 1
-
-    def expand(self):
-        children = []
-        blank = self.tiles.index(0)
-        col = blank % board_size
-        row = int(blank / board_size)
-
-        for dir in ["Up", "Down", "Left", "Right"]:
-            # pdir = self.parent.path if self.parent else None
-            # if pdir == "Up" and dir == "Down":
-            #     continue
-            # elif pdir == "Down" and dir == "Up":
-            #     continue
-            # elif pdir == "Left" and dir == "Right":
-            #     continue
-            # elif pdir == "Right" and dir == "Left":
-            #     continue
-
-            pos = test_dir(dir, blank, row, col)
-            if pos != -1:
-                tiles = list(self.tiles)
-                new_tiles = tiles
-                new_tiles[pos], new_tiles[blank] = new_tiles[blank], new_tiles[pos]
-                children.append(Node(tuple(new_tiles), self, dir))
-        return children
-
-
-class AstNode:
-    global goal_state
-
-    def __init__(self, tiles, parent=None, path=None, cost=1):
-        self.tiles = tiles
-        self.parent = parent
-        self.path = path
-        self.depth = (parent.depth + 1) if parent else 0
-        self.cost = cost
         self.heuristic = 0
-
-    def __str__(self):
-        return "{} : {}".format(self.tiles, self.heuristic)
-
-    def __lt__(self, other):
-        return self.heuristic < other.heuristic
-
-    def __eq__(self, other):
-        return self.tiles == other
-
-    def __cmp__(self, other):
-        return self < other
 
     def __hash__(self):
         return hash(self.tiles)
 
-    def expand(self):
+    def __eq__(self, other):
+        return self.tiles == other.tiles
+
+    def __lt__(self, other):
+        return self.heuristic < other.heuristic
+
+    def expand(self, reverse=False):
         children = []
         blank = self.tiles.index(0)
         col = blank % board_size
@@ -96,13 +55,15 @@ class AstNode:
             pos = test_dir(dir, blank, row, col)
             if pos != -1:
                 tiles = list(self.tiles)
-                new_tiles = tiles
-                new_tiles[pos], new_tiles[blank] = new_tiles[blank], new_tiles[pos]
-                children.append(AstNode(tuple(new_tiles), self, dir))
+                tiles[pos], tiles[blank] = tiles[blank], tiles[pos]
+                children.append(Node(tuple(tiles), self, dir))
+
+        if reverse:
+            children.reverse()
         return children
 
-    def calculate_ast_heuristic(self):
-        self.heuristic = self.count_misplaced_tiles() + self.manhattan_distance()
+    def calculate_heuristic(self):
+        self.heuristic = self.manhattan_distance() + self.depth
 
     def manhattan_distance(self):
         distance = 0
@@ -121,13 +82,6 @@ class AstNode:
             y2 = goal_positions[x][1]
             distance += abs(x1 - x2) + abs(y1 - y2)
         return distance
-
-    def count_misplaced_tiles(self):
-        count = 0
-        for i, x in enumerate(self.tiles):
-            if x != goal_state[i]:
-                count += 1
-        return count
 
 
 if platform.system() == "Windows":
@@ -171,6 +125,9 @@ def bfs(state):
             nodesExpanded = len(explored)
             return state
 
+        if len(explored) % 1000 == 0:
+            print(len(explored))
+
         for child in state.expand():
             if child not in frontier and child.tiles not in explored:
                 counter += 1
@@ -181,6 +138,7 @@ def bfs(state):
 def dfs(state):
     global nodesExpanded
     global maxDepth
+
     counter = 0
     frontier = OrderedDict()
     explored = set()
@@ -189,55 +147,74 @@ def dfs(state):
 
     while frontier:
         state = frontier.pop(next(reversed(frontier)))
-        explored.add(state.tiles)
+        explored.add(state)
 
         if state.tiles == goal_state:
             nodesExpanded = len(explored)
             return state
 
-        children = state.expand()
-        children.reverse()
-        for child in children:
-            if child not in frontier and child.tiles not in explored:
+        if len(explored) % 1000 == 0:
+            print(len(explored))
+
+        for child in state.expand(True):
+            if child not in frontier and child not in explored:
                 counter += 1
                 frontier[counter] = child
                 maxDepth = child.depth
 
 
-def ast(state):
+def ast(state, depth=0):
     global nodesExpanded
     global maxDepth
     global goal_state
-    state = AstNode(state)
-    state.calculate_ast_heuristic()
-    frontier = [state]
+    state = Node(state)
+    state.calculate_heuristic()
+    frontier = []
     explored = set()
 
+    heapq.heappush(frontier, state)
+
     while frontier:
+        heapq.heapify(frontier)
         state = heapq.heappop(frontier)
-        nodesExpanded = len(explored)
-        explored.add(state.tiles)
+        explored.add(state)
+
+        if depth and state.depth > depth:
+            return None
 
         if state.tiles == goal_state:
+            nodesExpanded = len(explored)
             return state
 
         if len(explored) % 1000 == 0:
             print(len(explored))
 
-        # if len(explored) > 10:
-        #     return state
-
         for child in state.expand():
-            if child not in frontier and child.tiles not in explored:
-                nodesExpanded += 1
-                frontier.append(child)
+            child.calculate_heuristic()
+            if child not in frontier and child not in explored:
+                heapq.heappush(frontier, child)
                 maxDepth = child.depth
             elif child in frontier:
-                frontier.remove(child)
-                child.heuristic -= 1
-                frontier.append(child)
+                dirs = {"Up": 0, "Down": 1, "Left": 2, "Right": 3}
+                old_child = frontier[frontier.index(child)]
+                print("{0.path:5} {0.tiles}".format(child))
+                print("{0.path:5} {0.tiles}".format(old_child))
+                print()
+                if dirs[old_child.path] > dirs[child.path]:
+                    frontier.remove(child)
+                    child.heuristic -= 1
+                    heapq.heappush(frontier, child)
 
-    return state
+
+def idast(state, max_depth=0):
+    depth = 1
+    result = Node(state)
+
+    while depth != max_depth:
+        result = ast(state, depth)
+        if result:
+            return result
+        depth += 1
 
 
 solution = None
@@ -250,6 +227,15 @@ elif sys.argv[1] == "dfs":
     solution = dfs(initial_state)
 elif sys.argv[1] == "ast":
     solution = ast(initial_state)
+elif sys.argv[1] == "idast":
+    depth = 50
+    if len(sys.argv) > 3:
+        depth = sys.argv[3]
+    solution = idast(initial_state, depth)
+
+if not solution:
+    print("It would appear that no solution exists for the puzzle", initial_state)
+    exit()
 
 temp = solution
 pathToGoal = [temp.path]
@@ -285,3 +271,31 @@ print("search_depth: {}".format(solution.depth))
 print("max_search_depth: {}".format(maxDepth))
 print("running_time: {}".format(time.clock() - start_time))
 print("max_ram_usage: {}".format(maxRam * 0.000001))
+
+# bfs 6,1,8,4,0,2,7,3,5
+#
+# path_to_goal: ['Down', 'Right', ... , 'Up', 'Up']
+# cost_of_path: 20
+# nodes_expanded: 54094
+# search_depth: 20
+# max_search_depth: 21
+#
+#
+#
+# dfs 6,1,8,4,0,2,7,3,5
+#
+# path_to_goal: ['Up', 'Left', 'Down', ... , 'Up', 'Left', 'Up', 'Left']
+# cost_of_path: 46142
+# nodes_expanded: 51015
+# search_depth: 46142
+# max_search_depth: 46142
+#
+#
+#
+# ast 6,1,8,4,0,2,7,3,5
+#
+# path_to_goal: ['Down', 'Right', 'Up', 'Up', 'Left', 'Down', 'Right', 'Down', 'Left', 'Up', 'Left', 'Up', 'Right', 'Right', 'Down', 'Down', 'Left', 'Left', 'Up', 'Up']
+# cost_of_path: 20
+# nodes_expanded: 696
+# search_depth: 20
+# max_search_depth: 20
